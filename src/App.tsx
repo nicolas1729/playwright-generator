@@ -28,16 +28,6 @@ import Markdown from 'react-markdown';
 // Initialize Gemini
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-interface Scenario {
-  id: string;
-  name: string;
-  description: string;
-  method: string;
-  path: string;
-  expectedStatus: number;
-  selected: boolean;
-}
-
 type OutputTab = 'tests' | 'types';
 
 export default function App() {
@@ -45,9 +35,6 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
-  const [scenarios, setScenarios] = useState<Scenario[]>([]);
-  const [isGeneratingScenarios, setIsGeneratingScenarios] = useState(false);
-  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
   const [isGeneratingTypes, setIsGeneratingTypes] = useState(false);
   const [isGeneratingFullSuite, setIsGeneratingFullSuite] = useState(false);
   const [generatedCode, setGeneratedCode] = useState('');
@@ -55,90 +42,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<OutputTab>('tests');
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-
-  const generateScenarios = async () => {
-    if (!swaggerJson) {
-      setError('Please provide a Swagger JSON');
-      return;
-    }
-
-    setIsGeneratingScenarios(true);
-    setError(null);
-    setGeneratedCode('');
-    setGeneratedTypes('');
-
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Analyze this Swagger/OpenAPI JSON and suggest 5-8 critical API test scenarios. 
-        Return the result as a JSON array of objects with these properties: 
-        name (string), description (string), method (string, e.g. GET, POST), path (string), expectedStatus (number).
-        
-        Swagger JSON:
-        ${swaggerJson}`,
-        config: {
-          responseMimeType: "application/json",
-        }
-      });
-
-      const result = JSON.parse(response.text || '[]');
-      setScenarios(result.map((s: any, index: number) => ({
-        ...s,
-        id: `scenario-${index}`,
-        selected: true
-      })));
-    } catch (err) {
-      console.error(err);
-      setError('Failed to generate scenarios. Please check your JSON format.');
-    } finally {
-      setIsGeneratingScenarios(false);
-    }
-  };
-
-  const generatePlaywrightCode = async () => {
-    const selectedScenarios = scenarios.filter(s => s.selected);
-    if (selectedScenarios.length === 0) {
-      setError('Please select at least one scenario');
-      return;
-    }
-
-    setIsGeneratingCode(true);
-    setError(null);
-    setActiveTab('tests');
-
-    try {
-      const authHeader = username && password 
-        ? `Basic \${Buffer.from('${username}:${password}').toString('base64')}`
-        : null;
-
-      const prompt = `Generate a Playwright API test file in TypeScript.
-      Base URL: ${baseUrl || 'http://localhost:3000'}
-      ${authHeader ? `Authentication: Basic Auth with username "${username}" and password "${password}"` : 'Authentication: None'}
-      
-      Scenarios to implement:
-      ${JSON.stringify(selectedScenarios, null, 2)}
-      
-      Requirements:
-      1. Use @playwright/test
-      2. Include proper setup for Basic Auth in the request headers if provided.
-      3. Each scenario should be a separate test() block.
-      4. Include comments explaining each test.
-      5. Use descriptive test names.
-      6. Return ONLY the code block, no markdown formatting.`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: prompt,
-      });
-
-      setGeneratedCode(response.text || '');
-    } catch (err) {
-      console.error(err);
-      setError('Failed to generate Playwright code.');
-    } finally {
-      setIsGeneratingCode(false);
-    }
-  };
 
   const generateFullSuite = async () => {
     if (!swaggerJson) {
@@ -167,8 +70,9 @@ export default function App() {
       3. For each endpoint, create a test that expects a successful status code (usually 200 or 201).
       4. Provide realistic mock data for request bodies if required by the Swagger.
       5. Include proper Basic Auth headers if provided.
-      6. Organize tests using describe() blocks if appropriate (e.g., grouped by resource).
-      7. Return ONLY the TypeScript code, no markdown formatting.
+      6. IMPORTANT: DO NOT include any "api_key" or "apiKey" headers in the requests.
+      7. Organize tests using describe() blocks if appropriate (e.g., grouped by resource).
+      8. Return ONLY the TypeScript code, no markdown formatting.
       
       Swagger JSON:
       ${swaggerJson}`;
@@ -179,7 +83,6 @@ export default function App() {
       });
 
       setGeneratedCode(response.text || '');
-      setScenarios([]); // Clear scenarios to focus on the full suite
     } catch (err) {
       console.error(err);
       setError('Failed to generate full test suite.');
@@ -219,10 +122,6 @@ export default function App() {
     } finally {
       setIsGeneratingTypes(false);
     }
-  };
-
-  const toggleScenario = (id: string) => {
-    setScenarios(prev => prev.map(s => s.id === id ? { ...s, selected: !s.selected } : s));
   };
 
   const copyToClipboard = (content: string) => {
@@ -271,23 +170,11 @@ export default function App() {
                 value={swaggerJson}
                 onChange={(e) => setSwaggerJson(e.target.value)}
               />
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <button
-                  onClick={generateScenarios}
-                  disabled={isGeneratingScenarios || !swaggerJson}
-                  className="py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
-                >
-                  {isGeneratingScenarios ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4" />
-                  )}
-                  Suggest Scenarios
-                </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
                   onClick={generateFullSuite}
                   disabled={isGeneratingFullSuite || !swaggerJson}
-                  className="py-2.5 px-4 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-300 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
+                  className="py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
                   title="Generate tests for ALL endpoints"
                 >
                   {isGeneratingFullSuite ? (
@@ -295,7 +182,7 @@ export default function App() {
                   ) : (
                     <Zap className="w-4 h-4" />
                   )}
-                  Full Suite (All)
+                  Generate Full Test Suite
                 </button>
                 <button
                   onClick={generateTypeScriptTypes}
@@ -354,7 +241,7 @@ export default function App() {
             </section>
           </div>
 
-          {/* Right Column: Scenarios & Code */}
+          {/* Right Column: Code Output */}
           <div className="space-y-6">
             {error && (
               <motion.div 
@@ -366,74 +253,6 @@ export default function App() {
                 <p className="text-sm">{error}</p>
               </motion.div>
             )}
-
-            <AnimatePresence mode="wait">
-              {scenarios.length > 0 && (
-                <motion.section 
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-slate-700 font-semibold">
-                      <Plus className="w-5 h-5 text-orange-500" />
-                      Test Scenarios
-                    </div>
-                    <span className="text-xs text-slate-400 font-medium">
-                      {scenarios.filter(s => s.selected).length} selected
-                    </span>
-                  </div>
-                  
-                  <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                    {scenarios.map((scenario) => (
-                      <div 
-                        key={scenario.id}
-                        onClick={() => toggleScenario(scenario.id)}
-                        className={`p-3 rounded-lg border transition-all cursor-pointer flex items-start gap-3 ${
-                          scenario.selected 
-                            ? 'bg-blue-50 border-blue-200' 
-                            : 'bg-white border-slate-100 hover:border-slate-200'
-                        }`}
-                      >
-                        <div className={`mt-1 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                          scenario.selected ? 'bg-blue-600 border-blue-600' : 'bg-white border-slate-300'
-                        }`}>
-                          {scenario.selected && <Check className="w-3 h-3 text-white" />}
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${
-                              scenario.method === 'GET' ? 'bg-green-100 text-green-700' :
-                              scenario.method === 'POST' ? 'bg-blue-100 text-blue-700' :
-                              'bg-slate-100 text-slate-700'
-                            }`}>
-                              {scenario.method}
-                            </span>
-                            <h4 className="text-sm font-semibold text-slate-800">{scenario.name}</h4>
-                          </div>
-                          <p className="text-xs text-slate-500 mt-1">{scenario.description}</p>
-                          <code className="text-[10px] text-slate-400 mt-2 block font-mono">{scenario.path}</code>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <button
-                    onClick={generatePlaywrightCode}
-                    disabled={isGeneratingCode || scenarios.filter(s => s.selected).length === 0}
-                    className="w-full py-3 px-4 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                  >
-                    {isGeneratingCode ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <Code2 className="w-5 h-5" />
-                    )}
-                    Generate Playwright Code
-                  </button>
-                </motion.section>
-              )}
-            </AnimatePresence>
 
             <AnimatePresence>
               {(generatedCode || generatedTypes) && (
@@ -494,10 +313,10 @@ export default function App() {
               )}
             </AnimatePresence>
 
-            {!scenarios.length && !isGeneratingScenarios && !generatedTypes && !isGeneratingTypes && !isGeneratingFullSuite && (
+            {!generatedCode && !generatedTypes && !isGeneratingFullSuite && !isGeneratingTypes && (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 py-20 border-2 border-dashed border-slate-200 rounded-xl">
                 <FileJson className="w-12 h-12 mb-4 opacity-20" />
-                <p className="text-sm">Analyze a Swagger JSON to see suggested scenarios, generate a full suite, or extract types.</p>
+                <p className="text-sm">Analyze a Swagger JSON to generate a full suite or extract types.</p>
               </div>
             )}
           </div>
