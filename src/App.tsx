@@ -54,38 +54,86 @@ export default function App() {
     setActiveTab('tests');
 
     try {
-      const authHeader = username && password 
-        ? `Basic \${Buffer.from('${username}:${password}').toString('base64')}`
-        : null;
+      const swagger = JSON.parse(swaggerJson);
+      const host = baseUrl || swagger.host || 'localhost:3000';
+      const basePath = swagger.basePath || '';
+      
+      // Better protocol detection
+      let protocol = 'https://';
+      if (host.includes('localhost') || host.includes('127.0.0.1')) {
+        protocol = 'http://';
+      }
+      
+      const cleanHost = host.replace(/^https?:\/\//, '');
+      const fullBaseUrl = host.startsWith('http') ? host : `${protocol}${cleanHost}`;
+      const finalBaseUrl = `${fullBaseUrl.replace(/\/$/, '')}${basePath}`;
 
-      const prompt = `Generate a COMPREHENSIVE Playwright API test suite in TypeScript that tests ALL endpoints defined in the provided Swagger JSON.
-      Focus on "passing" calls (successful 2xx responses).
+      let code = `import { test, expect } from '@playwright/test';\n\n`;
       
-      Base URL: ${baseUrl || 'http://localhost:3000'}
-      ${authHeader ? `Authentication: Basic Auth with username "${username}" and password "${password}"` : 'Authentication: None'}
+      code += `// Configuration de l'URL de base\n`;
+      code += `const baseURL = '${finalBaseUrl}';\n\n`;
       
-      Requirements:
-      1. Use @playwright/test.
-      2. Iterate through EVERY path and method in the Swagger JSON.
-      3. For each endpoint, create a test that expects a successful status code (usually 200 or 201).
-      4. Provide realistic mock data for request bodies if required by the Swagger.
-      5. Include proper Basic Auth headers if provided.
-      6. IMPORTANT: DO NOT include any "api_key" or "apiKey" headers in the requests.
-      7. Organize tests using describe() blocks if appropriate (e.g., grouped by resource).
-      8. Return ONLY the TypeScript code, no markdown formatting.
-      
-      Swagger JSON:
-      ${swaggerJson}`;
+      code += `test.use({\n`;
+      code += `  baseURL,\n`;
+      if (username && password) {
+        const auth = Buffer.from(`${username}:${password}`).toString('base64');
+        code += `  extraHTTPHeaders: {\n`;
+        code += `    'Authorization': 'Basic ${auth}',\n`;
+        code += `  },\n`;
+      }
+      code += `});\n\n`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: prompt,
+      const paths = swagger.paths || {};
+      
+      Object.keys(paths).forEach((path) => {
+        const methods = paths[path];
+        Object.keys(methods).forEach((method) => {
+          if (['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase())) {
+            const operation = methods[method];
+            const testName = operation.summary || `${method.toUpperCase()} ${path}`;
+            const description = operation.description || '';
+
+            code += `/**\n * ${testName}\n`;
+            if (description) code += ` * ${description}\n`;
+            code += ` */\n`;
+            code += `test('${method.toUpperCase()} ${path}', async ({ request }) => {\n`;
+            
+            // Prepare request options
+            let options = '';
+            if (['post', 'put', 'patch'].includes(method.toLowerCase())) {
+              // Try to generate a dummy body if schema exists
+              let body = {};
+              if (operation.parameters) {
+                const bodyParam = operation.parameters.find((p: any) => p.in === 'body');
+                if (bodyParam && bodyParam.schema) {
+                  const schema = bodyParam.schema;
+                  if (schema.properties) {
+                    Object.keys(schema.properties).forEach(prop => {
+                      const p = schema.properties[prop];
+                      if (p.type === 'string') (body as any)[prop] = 'string';
+                      else if (p.type === 'number' || p.type === 'integer') (body as any)[prop] = 0;
+                      else if (p.type === 'boolean') (body as any)[prop] = true;
+                    });
+                  }
+                }
+              }
+              options = `, {\n    data: ${JSON.stringify(body, null, 6).replace(/\n/g, '\n    ')}\n  }`;
+            }
+
+            // Replace path parameters with placeholders if any
+            const finalPath = path.replace(/{([^}]+)}/g, '1');
+
+            code += `  const response = await request.${method.toLowerCase()}(\`\${baseURL}${finalPath}\`${options});\n`;
+            code += `  expect(response.ok()).toBeTruthy();\n`;
+            code += `});\n\n`;
+          }
+        });
       });
 
-      setGeneratedCode(response.text || '');
+      setGeneratedCode(code);
     } catch (err) {
       console.error(err);
-      setError('Failed to generate full test suite.');
+      setError('Failed to parse Swagger JSON. Please ensure it is valid JSON.');
     } finally {
       setIsGeneratingFullSuite(false);
     }
