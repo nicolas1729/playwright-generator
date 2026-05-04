@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef } from 'react';
-import { GoogleGenAI } from "@google/genai";
+import { useState } from 'react';
 import { 
   FileJson, 
   ShieldCheck, 
@@ -14,32 +13,18 @@ import {
   Check, 
   Loader2, 
   AlertCircle,
-  Plus,
-  Trash2,
-  ChevronRight,
   Code2,
-  Braces,
-  Type,
   Zap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import Markdown from 'react-markdown';
-
-// Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-type OutputTab = 'tests' | 'types';
 
 export default function App() {
   const [swaggerJson, setSwaggerJson] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
-  const [isGeneratingTypes, setIsGeneratingTypes] = useState(false);
   const [isGeneratingFullSuite, setIsGeneratingFullSuite] = useState(false);
   const [generatedCode, setGeneratedCode] = useState('');
-  const [generatedTypes, setGeneratedTypes] = useState('');
-  const [activeTab, setActiveTab] = useState<OutputTab>('tests');
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -51,7 +36,6 @@ export default function App() {
 
     setIsGeneratingFullSuite(true);
     setError(null);
-    setActiveTab('tests');
 
     try {
       const swagger = JSON.parse(swaggerJson);
@@ -139,39 +123,6 @@ export default function App() {
     }
   };
 
-  const generateTypeScriptTypes = async () => {
-    if (!swaggerJson) {
-      setError('Please provide a Swagger JSON');
-      return;
-    }
-
-    setIsGeneratingTypes(true);
-    setError(null);
-    setActiveTab('types');
-
-    try {
-      const prompt = `Convert this Swagger/OpenAPI JSON into clean, well-structured TypeScript interfaces and types.
-      Include types for all schemas, request bodies, and responses.
-      Use standard TypeScript naming conventions (PascalCase for interfaces).
-      Return ONLY the TypeScript code, no markdown formatting.
-      
-      Swagger JSON:
-      ${swaggerJson}`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: prompt,
-      });
-
-      setGeneratedTypes(response.text || '');
-    } catch (err) {
-      console.error(err);
-      setError('Failed to generate TypeScript types.');
-    } finally {
-      setIsGeneratingTypes(false);
-    }
-  };
-
   const copyToClipboard = (content: string) => {
     navigator.clipboard.writeText(content);
     setCopied(true);
@@ -200,7 +151,7 @@ export default function App() {
               <PlayCircle className="text-blue-600 w-8 h-8" />
               Playwright Architect
             </h1>
-            <p className="text-slate-500 mt-1">Transform Swagger definitions into production-ready Playwright tests and TypeScript types.</p>
+            <p className="text-slate-500 mt-1">Transform Swagger definitions into production-ready Playwright tests.</p>
           </div>
         </header>
 
@@ -218,11 +169,11 @@ export default function App() {
                 value={swaggerJson}
                 onChange={(e) => setSwaggerJson(e.target.value)}
               />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex gap-3">
                 <button
                   onClick={generateFullSuite}
                   disabled={isGeneratingFullSuite || !swaggerJson}
-                  className="py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
+                  className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
                   title="Generate tests for ALL endpoints"
                 >
                   {isGeneratingFullSuite ? (
@@ -231,18 +182,6 @@ export default function App() {
                     <Zap className="w-4 h-4" />
                   )}
                   Generate Full Test Suite
-                </button>
-                <button
-                  onClick={generateTypeScriptTypes}
-                  disabled={isGeneratingTypes || !swaggerJson}
-                  className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-slate-700 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 border border-slate-200 text-sm"
-                >
-                  {isGeneratingTypes ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Braces className="w-4 h-4" />
-                  )}
-                  Extract Types
                 </button>
               </div>
             </section>
@@ -303,7 +242,7 @@ export default function App() {
             )}
 
             <AnimatePresence>
-              {(generatedCode || generatedTypes) && (
+              {generatedCode && (
                 <motion.section 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -311,42 +250,21 @@ export default function App() {
                 >
                   <div className="flex items-center justify-between px-4 py-3 bg-slate-800 border-b border-slate-700">
                     <div className="flex gap-4">
-                      {generatedCode && (
-                        <button 
-                          onClick={() => setActiveTab('tests')}
-                          className={`flex items-center gap-2 text-sm font-medium transition-colors ${
-                            activeTab === 'tests' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
-                          }`}
-                        >
-                          <Code2 className="w-4 h-4" />
-                          api-tests.spec.ts
-                        </button>
-                      )}
-                      {generatedTypes && (
-                        <button 
-                          onClick={() => setActiveTab('types')}
-                          className={`flex items-center gap-2 text-sm font-medium transition-colors ${
-                            activeTab === 'types' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
-                          }`}
-                        >
-                          <Braces className="w-4 h-4" />
-                          types.ts
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2 text-sm font-medium text-white">
+                        <Code2 className="w-4 h-4" />
+                        api-tests.spec.ts
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <button 
-                        onClick={() => copyToClipboard(activeTab === 'tests' ? generatedCode : generatedTypes)}
+                        onClick={() => copyToClipboard(generatedCode)}
                         className="p-1.5 text-slate-400 hover:text-white transition-colors rounded hover:bg-slate-700"
                         title="Copy to clipboard"
                       >
                         {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
                       </button>
                       <button 
-                        onClick={() => downloadFile(
-                          activeTab === 'tests' ? generatedCode : generatedTypes, 
-                          activeTab === 'tests' ? 'api-tests.spec.ts' : 'types.ts'
-                        )}
+                        onClick={() => downloadFile(generatedCode, 'api-tests.spec.ts')}
                         className="p-1.5 text-slate-400 hover:text-white transition-colors rounded hover:bg-slate-700"
                         title="Download file"
                       >
@@ -355,16 +273,16 @@ export default function App() {
                     </div>
                   </div>
                   <pre className="p-6 overflow-x-auto text-sm font-mono text-blue-300 custom-scrollbar max-h-[600px]">
-                    <code>{activeTab === 'tests' ? generatedCode : generatedTypes}</code>
+                    <code>{generatedCode}</code>
                   </pre>
                 </motion.section>
               )}
             </AnimatePresence>
 
-            {!generatedCode && !generatedTypes && !isGeneratingFullSuite && !isGeneratingTypes && (
+            {!generatedCode && !isGeneratingFullSuite && (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 py-20 border-2 border-dashed border-slate-200 rounded-xl">
                 <FileJson className="w-12 h-12 mb-4 opacity-20" />
-                <p className="text-sm">Analyze a Swagger JSON to generate a full suite or extract types.</p>
+                <p className="text-sm">Analyze a Swagger JSON to generate a full test suite.</p>
               </div>
             )}
           </div>
