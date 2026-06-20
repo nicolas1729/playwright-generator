@@ -1,5 +1,6 @@
 {
   "name": "Swagger to Playwright Test Generator",
   "description": "Generate Playwright API test scenarios from Swagger/OpenAPI JSON with Basic Auth support.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
