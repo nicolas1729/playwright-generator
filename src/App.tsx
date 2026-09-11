@@ -14,19 +14,46 @@ import {
   Loader2, 
   AlertCircle,
   Code2,
-  Zap
+  Zap,
+  Link2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { generateTestSuite } from './lib/testGenerator';
 
 export default function App() {
   const [swaggerJson, setSwaggerJson] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [getOnly, setGetOnly] = useState(true);
+  const [swaggerUrl, setSwaggerUrl] = useState('');
+  const [isFetchingUrl, setIsFetchingUrl] = useState(false);
   const [isGeneratingFullSuite, setIsGeneratingFullSuite] = useState(false);
   const [generatedCode, setGeneratedCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const fetchSwaggerFromUrl = async () => {
+    if (!swaggerUrl) return;
+
+    setIsFetchingUrl(true);
+    setError(null);
+
+    try {
+      const response = await fetch(swaggerUrl);
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
+      const text = await response.text();
+      const parsed = JSON.parse(text);
+      setSwaggerJson(JSON.stringify(parsed, null, 2));
+    } catch (err) {
+      console.error(err);
+      setError('Failed to load JSON from URL. Check the URL and that the server allows cross-origin requests (CORS).');
+    } finally {
+      setIsFetchingUrl(false);
+    }
+  };
 
   const generateFullSuite = async () => {
     if (!swaggerJson) {
@@ -36,84 +63,11 @@ export default function App() {
 
     setIsGeneratingFullSuite(true);
     setError(null);
+    // Yield once so the loading state actually paints before the (synchronous) generation work.
+    await new Promise(requestAnimationFrame);
 
     try {
-      const swagger = JSON.parse(swaggerJson);
-      const host = baseUrl || swagger.host || 'localhost:3000';
-      const basePath = swagger.basePath || '';
-      
-      // Better protocol detection
-      let protocol = 'https://';
-      if (host.includes('localhost') || host.includes('127.0.0.1')) {
-        protocol = 'http://';
-      }
-      
-      const cleanHost = host.replace(/^https?:\/\//, '');
-      const fullBaseUrl = host.startsWith('http') ? host : `${protocol}${cleanHost}`;
-      const finalBaseUrl = `${fullBaseUrl.replace(/\/$/, '')}${basePath}`;
-
-      let code = `import { test, expect } from '@playwright/test';\n\n`;
-      
-      code += `// Configuration de l'URL de base\n`;
-      code += `const baseURL = '${finalBaseUrl}';\n\n`;
-      
-      code += `test.use({\n`;
-      code += `  baseURL,\n`;
-      if (username && password) {
-        const auth = Buffer.from(`${username}:${password}`).toString('base64');
-        code += `  extraHTTPHeaders: {\n`;
-        code += `    'Authorization': 'Basic ${auth}',\n`;
-        code += `  },\n`;
-      }
-      code += `});\n\n`;
-
-      const paths = swagger.paths || {};
-      
-      Object.keys(paths).forEach((path) => {
-        const methods = paths[path];
-        Object.keys(methods).forEach((method) => {
-          if (['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase())) {
-            const operation = methods[method];
-            const testName = operation.summary || `${method.toUpperCase()} ${path}`;
-            const description = operation.description || '';
-
-            code += `/**\n * ${testName}\n`;
-            if (description) code += ` * ${description}\n`;
-            code += ` */\n`;
-            code += `test('${method.toUpperCase()} ${path}', async ({ request }) => {\n`;
-            
-            // Prepare request options
-            let options = '';
-            if (['post', 'put', 'patch'].includes(method.toLowerCase())) {
-              // Try to generate a dummy body if schema exists
-              let body = {};
-              if (operation.parameters) {
-                const bodyParam = operation.parameters.find((p: any) => p.in === 'body');
-                if (bodyParam && bodyParam.schema) {
-                  const schema = bodyParam.schema;
-                  if (schema.properties) {
-                    Object.keys(schema.properties).forEach(prop => {
-                      const p = schema.properties[prop];
-                      if (p.type === 'string') (body as any)[prop] = 'string';
-                      else if (p.type === 'number' || p.type === 'integer') (body as any)[prop] = 0;
-                      else if (p.type === 'boolean') (body as any)[prop] = true;
-                    });
-                  }
-                }
-              }
-              options = `, {\n    data: ${JSON.stringify(body, null, 6).replace(/\n/g, '\n    ')}\n  }`;
-            }
-
-            // Replace path parameters with placeholders if any
-            const finalPath = path.replace(/{([^}]+)}/g, '1');
-
-            code += `  const response = await request.${method.toLowerCase()}(\`\${baseURL}${finalPath}\`${options});\n`;
-            code += `  expect(response.ok()).toBeTruthy();\n`;
-            code += `});\n\n`;
-          }
-        });
-      });
-
+      const code = generateTestSuite(swaggerJson, { baseUrlOverride: baseUrl, username, password, getOnly });
       setGeneratedCode(code);
     } catch (err) {
       console.error(err);
@@ -123,10 +77,15 @@ export default function App() {
     }
   };
 
-  const copyToClipboard = (content: string) => {
-    navigator.clipboard.writeText(content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyToClipboard = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to copy to clipboard.');
+    }
   };
 
   const downloadFile = (content: string, filename: string) => {
@@ -163,25 +122,64 @@ export default function App() {
                 <FileJson className="w-5 h-5 text-blue-500" />
                 Swagger / OpenAPI Definition
               </div>
+              <div className="flex gap-2">
+                <input
+                  id="swaggerUrl"
+                  type="url"
+                  aria-label="Swagger or OpenAPI JSON URL"
+                  className="flex-1 p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="https://api.example.com/swagger.json"
+                  value={swaggerUrl}
+                  onChange={(e) => setSwaggerUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      fetchSwaggerFromUrl();
+                    }
+                  }}
+                />
+                <button
+                  onClick={fetchSwaggerFromUrl}
+                  disabled={isFetchingUrl || !swaggerUrl}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+                  title="Load Swagger/OpenAPI JSON from URL"
+                >
+                  {isFetchingUrl ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+                  Load
+                </button>
+              </div>
               <textarea
+                aria-label="Swagger or OpenAPI JSON definition"
                 className="w-full h-64 p-4 bg-slate-50 border border-slate-200 rounded-lg font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
                 placeholder='Paste your Swagger JSON here...'
                 value={swaggerJson}
                 onChange={(e) => setSwaggerJson(e.target.value)}
               />
+              <div className="flex items-center gap-2">
+                <input
+                  id="getOnly"
+                  type="checkbox"
+                  checked={getOnly}
+                  onChange={(e) => setGetOnly(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 outline-none"
+                />
+                <label htmlFor="getOnly" className="text-sm text-slate-600 select-none">
+                  GET requests only
+                </label>
+              </div>
               <div className="flex gap-3">
                 <button
                   onClick={generateFullSuite}
                   disabled={isGeneratingFullSuite || !swaggerJson}
                   className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
-                  title="Generate tests for ALL endpoints"
+                  title={getOnly ? 'Generate tests for GET endpoints only' : 'Generate tests for ALL endpoints'}
                 >
                   {isGeneratingFullSuite ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <Zap className="w-4 h-4" />
                   )}
-                  Generate Full Test Suite
+                  {getOnly ? 'Generate GET Test Suite' : 'Generate Full Test Suite'}
                 </button>
               </div>
             </section>
@@ -193,8 +191,9 @@ export default function App() {
               </div>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Base URL</label>
+                  <label htmlFor="baseUrl" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Base URL</label>
                   <input
+                    id="baseUrl"
                     type="text"
                     className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                     placeholder="https://api.example.com"
@@ -204,8 +203,9 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Basic Auth User</label>
+                    <label htmlFor="username" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Basic Auth User</label>
                     <input
+                      id="username"
                       type="text"
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                       placeholder="Username"
@@ -214,8 +214,9 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Basic Auth Pass</label>
+                    <label htmlFor="password" className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Basic Auth Pass</label>
                     <input
+                      id="password"
                       type="password"
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                       placeholder="Password"
